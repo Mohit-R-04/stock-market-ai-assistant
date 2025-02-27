@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import datetime
 import pandas as pd
@@ -26,7 +25,7 @@ except Exception as e:
 class ChatbotServer:
     def __init__(self, host='0.0.0.0', port=None):
         self.host = host
-        self.port = int(os.environ.get('PORT', 10000))  # Default to 10000 per Render docs
+        self.port = int(os.environ.get('PORT', 10000))  # Render default is 10000
         self.clients = {}
         
         # Load knowledge base and initialize models
@@ -167,20 +166,19 @@ class ChatbotServer:
             logger.error("index.html not found")
             return web.Response(text="Page not found", status=404)
 
-    async def start(self):
+    def start(self):
         """Start the HTTP and WebSocket server"""
         app = web.Application()
         app.router.add_get('/', self.handle_http)
         app.router.add_get('/ws', self.websocket_handler)
         
-        # Explicitly bind and log
         logger.info(f"Starting server on {self.host}:{self.port}")
-        await web.run_app(app, host=self.host, port=self.port)
+        web.run_app(app, host=self.host, port=self.port)
 
 def main():
     try:
         server = ChatbotServer()
-        asyncio.run(server.start())
+        server.start()
     except KeyboardInterrupt:
         logger.info("Server shutting down...")
     except Exception as e:
