@@ -27,7 +27,7 @@ except Exception as e:
 class ChatbotServer:
     def __init__(self, host='0.0.0.0', port=None):
         self.host = host
-        self.port = int(os.environ.get('PORT', 12346))
+        self.port = int(os.environ.get('PORT', 12346))  # Render sets PORT
         self.clients = {}
         
         # Load knowledge base and initialize models
@@ -46,7 +46,6 @@ class ChatbotServer:
             raise
 
     def preprocess_text(self, text):
-        """Preprocess text for better matching"""
         try:
             text = re.sub(r'[^\w\s]', '', text.lower())
             tokens = nltk.word_tokenize(text)
@@ -57,7 +56,6 @@ class ChatbotServer:
             return text
 
     def get_stock_price(self, ticker):
-        """Fetch real-time stock price using yfinance"""
         try:
             stock = yf.Ticker(ticker)
             data = stock.history(period="1d")
@@ -67,12 +65,10 @@ class ChatbotServer:
             return f"Could not fetch price for {ticker.upper()}."
         except Exception as e:
             logger.error(f"Error fetching stock price for {ticker}: {e}")
-            return "Sorry, I couldn't retrieve the stock price at this time."
+            return "Sorry, I couldn't retrieve the stock price."
 
     async def find_best_answer(self, question):
-        """Enhanced answer matching with real-time stock data"""
         try:
-            # Check for stock price requests
             price_match = re.search(r'(\w+)\s*(price|stock price)', question, re.IGNORECASE)
             if price_match:
                 ticker = price_match.group(1)
@@ -82,7 +78,6 @@ class ChatbotServer:
                     'similar_questions': []
                 }
 
-            # FAQ matching
             processed_question = self.preprocess_text(question)
             question_embedding = self.model.encode([processed_question])
             similarities = cosine_similarity(question_embedding, self.question_embeddings)[0]
@@ -98,7 +93,7 @@ class ChatbotServer:
                 }
             elif top_scores[0] > 0.5:
                 return {
-                    'answer': f"Here's what I found that might help: \n\n{self.knowledge_base.iloc[top_indices[0]]['answer']}",
+                    'answer': f"Here's what I found: \n\n{self.knowledge_base.iloc[top_indices[0]]['answer']}",
                     'confidence': float(top_scores[0]),
                     'similar_questions': self.knowledge_base.iloc[top_indices[1:]]['question'].tolist(),
                     'suggestion': "You might also be interested in these related topics:"
@@ -106,19 +101,18 @@ class ChatbotServer:
             else:
                 related_questions = self.knowledge_base.iloc[top_indices]['question'].tolist()
                 return {
-                    'answer': "I'm not sure about that specific question, but I can help with these related topics:",
+                    'answer': "I'm not sure about that, but I can help with these related topics:",
                     'confidence': 0.0,
                     'similar_questions': related_questions
                 }
         except Exception as e:
             logger.error(f"Error finding answer: {e}")
             return {
-                'answer': "I apologize, but I encountered an error processing your question.",
+                'answer': "I apologize, an error occurred processing your question.",
                 'confidence': 0.0
             }
 
     async def handle_message(self, websocket, message):
-        """Handle incoming messages"""
         try:
             data = json.loads(message)
             question = data.get('content', '').strip()
@@ -141,33 +135,28 @@ class ChatbotServer:
             logger.error(f"Error handling message: {e}")
             await websocket.send(json.dumps({'type': 'error', 'content': 'An error occurred'}))
 
-    async def handler(self, websocket):
-        """Main handler for each client connection"""
+    async def websocket_handler(self, request):
+        """Handle WebSocket connections via aiohttp"""
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        
+        self.clients[ws] = {"joined_at": datetime.now()}
+        logger.info(f"New client connected. Total clients: {len(self.clients)}")
+        
         try:
-            self.clients[websocket] = {"joined_at": datetime.now()}
-            logger.info(f"New client connected. Total clients: {len(self.clients)}")
-            
-            async for message in websocket:
-                await self.handle_message(websocket, message)
+            async for msg in ws:
+                if msg.type == web.WSMsgType.TEXT:
+                    await self.handle_message(ws, msg.data)
+                elif msg.type == web.WSMsgType.CLOSED:
+                    break
         except websockets.exceptions.ConnectionClosed:
             logger.info("Client connection closed")
         finally:
-            if websocket in self.clients:
-                del self.clients[websocket]
+            if ws in self.clients:
+                del self.clients[ws]
                 logger.info(f"Client disconnected. Total clients: {len(self.clients)}")
-
-    async def start(self):
-        """Start the combined HTTP and WebSocket server"""
-        app = web.Application()
-        app.router.add_get('/', self.handle_http)
-        app['websockets'] = websockets.serve(self.handler, self.host, self.port)
         
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, self.host, self.port)
-        await site.start()
-        logger.info(f"Server started on http://{self.host}:{self.port} and ws://{self.host}:{self.port}")
-        await asyncio.Future()
+        return ws
 
     async def handle_http(self, request):
         """Serve the index.html file"""
@@ -176,6 +165,19 @@ class ChatbotServer:
                 return web.Response(text=f.read(), content_type='text/html')
         except FileNotFoundError:
             return web.Response(text="Page not found", status=404)
+
+    async def start(self):
+        """Start the HTTP and WebSocket server using aiohttp"""
+        app = web.Application()
+        app.router.add_get('/', self.handle_http)
+        app.router.add_get('/ws', self.websocket_handler)  # WebSocket endpoint
+        
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, self.host, self.port)
+        await site.start()
+        logger.info(f"Server running on http://{self.host}:{self.port} with WebSocket at ws://{self.host}:{self.port}/ws")
+        await asyncio.Future()  # Run forever
 
 def main():
     try:
