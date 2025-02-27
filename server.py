@@ -10,6 +10,7 @@ import nltk
 import re
 import os
 from aiohttp import web
+import yfinance as yf
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -26,7 +27,7 @@ except Exception as e:
 class ChatbotServer:
     def __init__(self, host='0.0.0.0', port=None):
         self.host = host
-        self.port = int(os.environ.get('PORT', 12346))  # Render sets PORT env variable
+        self.port = int(os.environ.get('PORT', 12346))
         self.clients = {}
         
         # Load knowledge base and initialize models
@@ -55,26 +56,46 @@ class ChatbotServer:
             logger.error(f"Error preprocessing text: {e}")
             return text
 
-    async def find_best_answer(self, question):
-        """Enhanced answer matching with related questions"""
+    def get_stock_price(self, ticker):
+        """Fetch real-time stock price using yfinance"""
         try:
+            stock = yf.Ticker(ticker)
+            data = stock.history(period="1d")
+            if not data.empty:
+                price = data['Close'].iloc[-1]
+                return f"The current price of {ticker.upper()} is ${price:.2f}."
+            return f"Could not fetch price for {ticker.upper()}."
+        except Exception as e:
+            logger.error(f"Error fetching stock price for {ticker}: {e}")
+            return "Sorry, I couldn't retrieve the stock price at this time."
+
+    async def find_best_answer(self, question):
+        """Enhanced answer matching with real-time stock data"""
+        try:
+            # Check for stock price requests
+            price_match = re.search(r'(\w+)\s*(price|stock price)', question, re.IGNORECASE)
+            if price_match:
+                ticker = price_match.group(1)
+                return {
+                    'answer': self.get_stock_price(ticker),
+                    'confidence': 1.0,
+                    'similar_questions': []
+                }
+
+            # FAQ matching
             processed_question = self.preprocess_text(question)
             question_embedding = self.model.encode([processed_question])
             similarities = cosine_similarity(question_embedding, self.question_embeddings)[0]
             
-            # Get top 5 matches
             top_indices = similarities.argsort()[-5:][::-1]
             top_scores = similarities[top_indices]
             
-            # Best match with high confidence
             if top_scores[0] > 0.8:
                 return {
                     'answer': self.knowledge_base.iloc[top_indices[0]]['answer'],
                     'confidence': float(top_scores[0]),
                     'similar_questions': self.knowledge_base.iloc[top_indices[1:]]['question'].tolist()
                 }
-            
-            # Moderate match with suggestions
             elif top_scores[0] > 0.5:
                 return {
                     'answer': f"Here's what I found that might help: \n\n{self.knowledge_base.iloc[top_indices[0]]['answer']}",
@@ -82,20 +103,17 @@ class ChatbotServer:
                     'similar_questions': self.knowledge_base.iloc[top_indices[1:]]['question'].tolist(),
                     'suggestion': "You might also be interested in these related topics:"
                 }
-            
-            # Low confidence with related topics
             else:
                 related_questions = self.knowledge_base.iloc[top_indices]['question'].tolist()
                 return {
-                    'answer': "I'm not quite sure about that specific question, but I can help you with these related topics:",
+                    'answer': "I'm not sure about that specific question, but I can help with these related topics:",
                     'confidence': 0.0,
                     'similar_questions': related_questions
                 }
-                
         except Exception as e:
             logger.error(f"Error finding answer: {e}")
             return {
-                'answer': "I apologize, but I encountered an error processing your question. Please try again.",
+                'answer': "I apologize, but I encountered an error processing your question.",
                 'confidence': 0.0
             }
 
@@ -116,15 +134,12 @@ class ChatbotServer:
                     'suggestion': response.get('suggestion', ''),
                     'timestamp': datetime.now().strftime("%H:%M:%S")
                 }))
-                
         except json.JSONDecodeError:
             logger.error("Invalid JSON received")
+            await websocket.send(json.dumps({'type': 'error', 'content': 'Invalid message format'}))
         except Exception as e:
             logger.error(f"Error handling message: {e}")
-            await websocket.send(json.dumps({
-                'type': 'error',
-                'content': 'Sorry, I encountered an error processing your request.'
-            }))
+            await websocket.send(json.dumps({'type': 'error', 'content': 'An error occurred'}))
 
     async def handler(self, websocket):
         """Main handler for each client connection"""
@@ -134,7 +149,6 @@ class ChatbotServer:
             
             async for message in websocket:
                 await self.handle_message(websocket, message)
-                
         except websockets.exceptions.ConnectionClosed:
             logger.info("Client connection closed")
         finally:
@@ -145,7 +159,7 @@ class ChatbotServer:
     async def start(self):
         """Start the combined HTTP and WebSocket server"""
         app = web.Application()
-        app.router.add_get('/', self.handle_http)  # Serve index.html at root
+        app.router.add_get('/', self.handle_http)
         app['websockets'] = websockets.serve(self.handler, self.host, self.port)
         
         runner = web.AppRunner(app)
@@ -153,7 +167,7 @@ class ChatbotServer:
         site = web.TCPSite(runner, self.host, self.port)
         await site.start()
         logger.info(f"Server started on http://{self.host}:{self.port} and ws://{self.host}:{self.port}")
-        await asyncio.Future()  # Run forever
+        await asyncio.Future()
 
     async def handle_http(self, request):
         """Serve the index.html file"""
@@ -161,7 +175,7 @@ class ChatbotServer:
             with open('index.html', 'r', encoding='utf-8') as f:
                 return web.Response(text=f.read(), content_type='text/html')
         except FileNotFoundError:
-            return web.Response(text="File not found", status=404)
+            return web.Response(text="Page not found", status=404)
 
 def main():
     try:

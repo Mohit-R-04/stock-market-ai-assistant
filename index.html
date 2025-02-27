@@ -49,6 +49,7 @@
         padding: 20px;
         margin-bottom: 20px;
         box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        position: relative;
       }
 
       #input-container {
@@ -96,6 +97,11 @@
         transform: translateY(-2px);
       }
 
+      button:disabled {
+        background: #666;
+        cursor: not-allowed;
+      }
+
       .message {
         margin-bottom: 20px;
         padding: 15px;
@@ -127,6 +133,13 @@
         border: 1px solid var(--glass-border);
       }
 
+      .system-message {
+        text-align: center;
+        color: rgba(255, 255, 255, 0.7);
+        margin: 20px 0;
+        font-style: italic;
+      }
+
       .similar-questions {
         margin-top: 15px;
         padding-top: 15px;
@@ -150,11 +163,10 @@
         transform: translateX(5px);
       }
 
-      .system-message {
+      .loading {
         text-align: center;
+        padding: 10px;
         color: rgba(255, 255, 255, 0.7);
-        margin: 20px 0;
-        font-style: italic;
       }
 
       @media (max-width: 768px) {
@@ -184,9 +196,9 @@
         <input
           type="text"
           id="message-input"
-          placeholder="Ask me anything about stock markets..."
+          placeholder="Ask me anything about stock markets (e.g., 'AAPL price')..."
         />
-        <button onclick="sendMessage()">Send</button>
+        <button id="send-button" onclick="sendMessage()">Send</button>
       </div>
     </div>
 
@@ -198,15 +210,20 @@
       );
       const chatContainer = document.getElementById("chat-container");
       const messageInput = document.getElementById("message-input");
+      const sendButton = document.getElementById("send-button");
+      let isWaiting = false;
 
       ws.onopen = () => {
         appendMessage(
           "system",
-          "Connected! Ask me anything about stock markets."
+          "Connected! Ask me anything about stock markets (e.g., 'AAPL price')."
         );
       };
 
       ws.onmessage = (event) => {
+        isWaiting = false;
+        sendButton.disabled = false;
+        removeLoadingIndicator();
         const response = JSON.parse(event.data);
         let message = response.content;
 
@@ -236,14 +253,15 @@
       };
 
       ws.onerror = (error) => {
-        appendMessage("system", "Error connecting to AI Assistant server");
+        appendMessage(
+          "system",
+          "Error connecting to server. Please try again."
+        );
       };
 
       ws.onclose = () => {
-        appendMessage(
-          "system",
-          "Disconnected from server. Please refresh the page."
-        );
+        appendMessage("system", "Disconnected. Refresh to reconnect.");
+        sendButton.disabled = true;
       };
 
       function appendMessage(sender, content) {
@@ -260,6 +278,20 @@
         chatContainer.scrollTop = chatContainer.scrollHeight;
       }
 
+      function appendLoadingIndicator() {
+        const loadingDiv = document.createElement("div");
+        loadingDiv.className = "loading";
+        loadingDiv.id = "loading-indicator";
+        loadingDiv.textContent = "Thinking...";
+        chatContainer.appendChild(loadingDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+      }
+
+      function removeLoadingIndicator() {
+        const loadingDiv = document.getElementById("loading-indicator");
+        if (loadingDiv) loadingDiv.remove();
+      }
+
       function askQuestion(question) {
         messageInput.value = question;
         sendMessage();
@@ -267,20 +299,22 @@
 
       function sendMessage() {
         const message = messageInput.value.trim();
-        if (message) {
+        if (message && !isWaiting) {
           appendMessage("user", message);
+          appendLoadingIndicator();
           ws.send(JSON.stringify({ content: message }));
           messageInput.value = "";
+          isWaiting = true;
+          sendButton.disabled = true;
         }
       }
 
       messageInput.addEventListener("keypress", (e) => {
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !isWaiting) {
           sendMessage();
         }
       });
 
-      // Auto-focus input on page load
       messageInput.focus();
     </script>
   </body>
