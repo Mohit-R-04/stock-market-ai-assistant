@@ -1,8 +1,6 @@
 import asyncio
-import websockets
-import json
-from datetime import datetime
 import logging
+from datetime import datetime
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -10,10 +8,11 @@ import nltk
 import re
 import os
 from aiohttp import web
+import aiohttp.web_ws
 import yfinance as yf
 
 # Setup logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Download required NLTK data
@@ -27,7 +26,7 @@ except Exception as e:
 class ChatbotServer:
     def __init__(self, host='0.0.0.0', port=None):
         self.host = host
-        self.port = int(os.environ.get('PORT', 12346))  # Render sets PORT
+        self.port = int(os.environ.get('PORT', 10000))  # Default to 10000 per Render docs
         self.clients = {}
         
         # Load knowledge base and initialize models
@@ -119,7 +118,7 @@ class ChatbotServer:
             
             if question:
                 response = await self.find_best_answer(question)
-                await websocket.send(json.dumps({
+                await websocket.send_json({
                     'type': 'message',
                     'sender': 'AI Assistant',
                     'content': response['answer'],
@@ -127,16 +126,16 @@ class ChatbotServer:
                     'similar_questions': response.get('similar_questions', []),
                     'suggestion': response.get('suggestion', ''),
                     'timestamp': datetime.now().strftime("%H:%M:%S")
-                }))
+                })
         except json.JSONDecodeError:
             logger.error("Invalid JSON received")
-            await websocket.send(json.dumps({'type': 'error', 'content': 'Invalid message format'}))
+            await websocket.send_json({'type': 'error', 'content': 'Invalid message format'})
         except Exception as e:
             logger.error(f"Error handling message: {e}")
-            await websocket.send(json.dumps({'type': 'error', 'content': 'An error occurred'}))
+            await websocket.send_json({'type': 'error', 'content': 'An error occurred'})
 
     async def websocket_handler(self, request):
-        """Handle WebSocket connections via aiohttp"""
+        """Handle WebSocket connections"""
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         
@@ -145,12 +144,13 @@ class ChatbotServer:
         
         try:
             async for msg in ws:
-                if msg.type == web.WSMsgType.TEXT:
+                if msg.type == aiohttp.WSMsgType.TEXT:
                     await self.handle_message(ws, msg.data)
-                elif msg.type == web.WSMsgType.CLOSED:
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.error(f"WebSocket error: {ws.exception()}")
                     break
-        except websockets.exceptions.ConnectionClosed:
-            logger.info("Client connection closed")
+        except Exception as e:
+            logger.error(f"WebSocket connection error: {e}")
         finally:
             if ws in self.clients:
                 del self.clients[ws]
@@ -164,20 +164,18 @@ class ChatbotServer:
             with open('index.html', 'r', encoding='utf-8') as f:
                 return web.Response(text=f.read(), content_type='text/html')
         except FileNotFoundError:
+            logger.error("index.html not found")
             return web.Response(text="Page not found", status=404)
 
     async def start(self):
-        """Start the HTTP and WebSocket server using aiohttp"""
+        """Start the HTTP and WebSocket server"""
         app = web.Application()
         app.router.add_get('/', self.handle_http)
-        app.router.add_get('/ws', self.websocket_handler)  # WebSocket endpoint
+        app.router.add_get('/ws', self.websocket_handler)
         
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, self.host, self.port)
-        await site.start()
-        logger.info(f"Server running on http://{self.host}:{self.port} with WebSocket at ws://{self.host}:{self.port}/ws")
-        await asyncio.Future()  # Run forever
+        # Explicitly bind and log
+        logger.info(f"Starting server on {self.host}:{self.port}")
+        await web.run_app(app, host=self.host, port=self.port)
 
 def main():
     try:
