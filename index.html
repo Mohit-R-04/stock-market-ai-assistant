@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stock Market AI Assistant</title>
+    <style>
+      :root {
+        --primary-color: #2196f3;
+        --glass-bg: rgba(255, 255, 255, 0.1);
+        --glass-border: rgba(255, 255, 255, 0.2);
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+      }
+
+      body {
+        min-height: 100vh;
+        background: linear-gradient(135deg, #1e3c72, #2a5298);
+        padding: 20px;
+        color: white;
+      }
+
+      .container {
+        max-width: 1000px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        text-align: center;
+        margin-bottom: 30px;
+        font-size: 2.5em;
+        font-weight: 600;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+      }
+
+      #chat-container {
+        height: 600px;
+        background: var(--glass-bg);
+        backdrop-filter: blur(10px);
+        border: 1px solid var(--glass-border);
+        border-radius: 15px;
+        overflow-y: auto;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+      }
+
+      #input-container {
+        display: flex;
+        gap: 15px;
+        background: var(--glass-bg);
+        backdrop-filter: blur(10px);
+        padding: 20px;
+        border-radius: 15px;
+        border: 1px solid var(--glass-border);
+      }
+
+      #message-input {
+        flex-grow: 1;
+        padding: 15px;
+        border: none;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.1);
+        color: white;
+        font-size: 16px;
+      }
+
+      #message-input::placeholder {
+        color: rgba(255, 255, 255, 0.6);
+      }
+
+      #message-input:focus {
+        outline: none;
+        background: rgba(255, 255, 255, 0.15);
+        box-shadow: 0 0 0 2px var(--primary-color);
+      }
+
+      button {
+        padding: 15px 30px;
+        border: none;
+        border-radius: 10px;
+        background: var(--primary-color);
+        color: white;
+        font-size: 16px;
+        cursor: pointer;
+        transition: transform 0.2s;
+      }
+
+      button:hover {
+        transform: translateY(-2px);
+      }
+
+      .message {
+        margin-bottom: 20px;
+        padding: 15px;
+        border-radius: 15px;
+        max-width: 80%;
+        animation: fadeIn 0.3s ease;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .user-message {
+        background: rgba(33, 150, 243, 0.3);
+        margin-left: auto;
+        border: 1px solid rgba(33, 150, 243, 0.4);
+      }
+
+      .bot-message {
+        background: rgba(255, 255, 255, 0.1);
+        margin-right: auto;
+        border: 1px solid var(--glass-border);
+      }
+
+      .similar-questions {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .similar-questions ul {
+        list-style: none;
+        padding-left: 0;
+      }
+
+      .similar-questions li {
+        margin: 8px 0;
+        color: rgba(255, 255, 255, 0.8);
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .similar-questions li:hover {
+        color: var(--primary-color);
+        transform: translateX(5px);
+      }
+
+      .system-message {
+        text-align: center;
+        color: rgba(255, 255, 255, 0.7);
+        margin: 20px 0;
+        font-style: italic;
+      }
+
+      @media (max-width: 768px) {
+        .container {
+          padding: 10px;
+        }
+
+        #chat-container {
+          height: 500px;
+        }
+
+        .message {
+          max-width: 90%;
+        }
+
+        button {
+          padding: 15px 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Stock Market AI Assistant</h1>
+      <div id="chat-container"></div>
+      <div id="input-container">
+        <input
+          type="text"
+          id="message-input"
+          placeholder="Ask me anything about stock markets..."
+        />
+        <button onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+
+    <script>
+      const ws = new WebSocket(
+        `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${
+          window.location.host
+        }`
+      );
+      const chatContainer = document.getElementById("chat-container");
+      const messageInput = document.getElementById("message-input");
+
+      ws.onopen = () => {
+        appendMessage(
+          "system",
+          "Connected! Ask me anything about stock markets."
+        );
+      };
+
+      ws.onmessage = (event) => {
+        const response = JSON.parse(event.data);
+        let message = response.content;
+
+        if (
+          response.similar_questions &&
+          response.similar_questions.length > 0
+        ) {
+          message += '<div class="similar-questions">';
+          if (response.suggestion) {
+            message += `<p>${response.suggestion}</p>`;
+          }
+          message +=
+            "<ul>" +
+            response.similar_questions
+              .map(
+                (q) =>
+                  `<li onclick="askQuestion('${q.replace(
+                    /'/g,
+                    "\\'"
+                  )}')">${q}</li>`
+              )
+              .join("") +
+            "</ul></div>";
+        }
+
+        appendMessage("bot", message);
+      };
+
+      ws.onerror = (error) => {
+        appendMessage("system", "Error connecting to AI Assistant server");
+      };
+
+      ws.onclose = () => {
+        appendMessage(
+          "system",
+          "Disconnected from server. Please refresh the page."
+        );
+      };
+
+      function appendMessage(sender, content) {
+        const messageDiv = document.createElement("div");
+        messageDiv.className = `message ${
+          sender === "user"
+            ? "user-message"
+            : sender === "bot"
+            ? "bot-message"
+            : "system-message"
+        }`;
+        messageDiv.innerHTML = content;
+        chatContainer.appendChild(messageDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+      }
+
+      function askQuestion(question) {
+        messageInput.value = question;
+        sendMessage();
+      }
+
+      function sendMessage() {
+        const message = messageInput.value.trim();
+        if (message) {
+          appendMessage("user", message);
+          ws.send(JSON.stringify({ content: message }));
+          messageInput.value = "";
+        }
+      }
+
+      messageInput.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") {
+          sendMessage();
+        }
+      });
+
+      // Auto-focus input on page load
+      messageInput.focus();
+    </script>
+  </body>
+</html>
